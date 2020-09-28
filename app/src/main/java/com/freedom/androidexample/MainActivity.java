@@ -1,7 +1,11 @@
 package com.freedom.androidexample;
 
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.support.v7.app.AppCompatActivity;
 import android.os.Bundle;
+import android.util.Base64;
+import android.widget.ImageView;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -22,16 +26,21 @@ import okhttp3.logging.HttpLoggingInterceptor;
 import retrofit2.Retrofit;
 import retrofit2.adapter.rxjava2.RxJava2CallAdapterFactory;
 import retrofit2.converter.gson.GsonConverterFactory;
+import retrofit2.converter.scalars.ScalarsConverterFactory;
 
 import static com.freedom.androidexample.APIService.BASE_URL;
 
 public class MainActivity extends AppCompatActivity {
 
     Retrofit retrofit;
+    Retrofit retrofitAWS;
     TextView textView;
+    ImageView videoImageView;
     APIService apiService;
+    APIService apiServiceAWS;
     Disposable disposableCommands;
     Disposable disposableData;
+    Disposable disposableVideo;
 
 
     @Override
@@ -40,6 +49,7 @@ public class MainActivity extends AppCompatActivity {
         setContentView(R.layout.activity_main);
 
         textView = findViewById(R.id.textView);
+        videoImageView = findViewById(R.id.videoImageView);
 
         HttpLoggingInterceptor interceptor = new HttpLoggingInterceptor();
         interceptor.setLevel(HttpLoggingInterceptor.Level.BODY);
@@ -64,6 +74,15 @@ public class MainActivity extends AppCompatActivity {
 
         apiService = retrofit.create(APIService.class);
 
+        retrofitAWS = new Retrofit.Builder()
+                .baseUrl("https://video.freedomrobotics.ai/")
+                .client(client)
+                .addCallAdapterFactory(RxJava2CallAdapterFactory.create())
+                .addConverterFactory(ScalarsConverterFactory.create())
+                .build();
+
+        apiServiceAWS = retrofitAWS.create(APIService.class);
+
 
         disposableCommands = Observable.interval(1000, 5000,
                 TimeUnit.MILLISECONDS)
@@ -74,6 +93,11 @@ public class MainActivity extends AppCompatActivity {
                 TimeUnit.MILLISECONDS)
                 .observeOn(AndroidSchedulers.mainThread())
                 .subscribe(this::callSendFreedomDataEndpoint, this::onError);
+
+        disposableVideo = Observable.interval(1000, 500,
+                TimeUnit.MILLISECONDS)
+                .observeOn(AndroidSchedulers.mainThread())
+                .subscribe(this::callFreedomVideoEndpoint, this::onError);
 
     }
 
@@ -93,6 +117,12 @@ public class MainActivity extends AppCompatActivity {
                     .observeOn(AndroidSchedulers.mainThread())
                     .subscribe(this::callSendFreedomDataEndpoint, this::onError);
         }
+        if (disposableVideo.isDisposed()) {
+            disposableVideo = Observable.interval(1000, 500,
+                    TimeUnit.MILLISECONDS)
+                    .observeOn(AndroidSchedulers.mainThread())
+                    .subscribe(this::callFreedomVideoEndpoint, this::onError);
+        }
     }
 
     private void callFreedomCommandsEndpoint(Long aLong) {
@@ -100,6 +130,13 @@ public class MainActivity extends AppCompatActivity {
         observable.subscribeOn(Schedulers.newThread()).
                 observeOn(AndroidSchedulers.mainThread())
                 .subscribe(this::handleResultsFreedomCommands, this::handleError);
+    }
+
+    private void callFreedomVideoEndpoint(Long aLong) {
+        Observable<List<List<String>>> observable = apiService.getFreedomVideoFrameURL(Constants.mc_token, Constants.mc_secret);
+        observable.subscribeOn(Schedulers.newThread()).
+                observeOn(AndroidSchedulers.mainThread())
+                .subscribe(this::handleResultsFreedomVideoURL, this::handleError);
     }
 
     private void callSendFreedomDataEndpoint(Long aLong) {
@@ -144,13 +181,38 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    private void handleResultsFreedomVideoURL(List<List<String>> videoFrameURLs) {
+        if(videoFrameURLs != null) {
+            String videoURL = videoFrameURLs.get(0).get(1).split("https://video.freedomrobotics.ai/")[1];
+
+            Observable<String> observable = apiServiceAWS.getFreedomVideoFrame(videoURL);
+            observable.subscribeOn(Schedulers.newThread()).
+                    observeOn(AndroidSchedulers.mainThread())
+                    .subscribe(this::handleResultsFreedomVideo, this::handleError);
+        }
+    }
+
+    private void handleResultsFreedomVideo(String videoFrameBase64) {
+        if(videoFrameBase64 != null) {
+            //decode base64 string to image
+            byte[] imageBytes = Base64.decode(videoFrameBase64, Base64.DEFAULT);
+            Bitmap decodedImage = BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.length);
+            videoImageView.setImageBitmap(decodedImage);
+            videoImageView.requestLayout();
+            videoImageView.getLayoutParams().height = 480;
+            videoImageView.getLayoutParams().width = 640;
+        }
+    }
+
+
+
     private void handleResultsFreedomData(FreedomResponse response) {
         //Add your response handler here
     }
 
     private void handleError(Throwable t) {
-
-        //Add your error here.
+        Toast.makeText(this, t.getMessage(),
+                Toast.LENGTH_LONG).show();
     }
 
     @Override
@@ -159,5 +221,6 @@ public class MainActivity extends AppCompatActivity {
 
         disposableCommands.dispose();
         disposableData.dispose();
+        disposableVideo.dispose();
     }
 }
